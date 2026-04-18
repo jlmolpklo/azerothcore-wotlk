@@ -61,13 +61,24 @@ public:
     uint8 GetTalentPointBonus(uint32 accountId, uint8 level) const;
     bool CanLearnSpell(uint32 accountId, uint32 spellId) const;
     
+    // 会员升级
+    bool GetUpgradeInfo(uint32 targetTier, uint32& itemId, uint32& quantity) const;
+    bool CanUpgrade(uint32 accountId, uint32 targetTier) const;
+    bool UpgradeMember(uint32 accountId, uint32 targetTier);
+    
     // 数据修改
     void SetMemberTier(uint32 accountId, uint32 tier);
     void SaveMemberToDB(uint32 accountId, uint32 tier, uint32 expireTime);
+    void SaveUpgradeLog(uint32 accountId, uint32 oldTier, uint32 newTier, uint32 itemId, uint32 quantity);
+    std::vector<UpgradeLog> GetUpgradeLogs(uint32 accountId, uint32 limit = 10) const;
+    
+    // GM 命令
+    bool SetUpgradeItem(uint32 targetTier, uint32 itemId, uint32 quantity);
     
     // 配置访问
     float GetTierDropRateBonus(uint32 tier) const;
     uint8 GetTierTalentBonus(uint32 tier) const;
+    uint32 GetMinTierForSpell(uint32 spellId) const;
     
 private:
     MemberSystem();
@@ -111,6 +122,30 @@ CREATE TABLE `vip_member` (
   PRIMARY KEY (`account_id`),
   KEY `idx_expire_time` (`expire_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会员信息表';
+
+-- 会员升级物品配置表
+DROP TABLE IF EXISTS `vip_upgrade_items`;
+CREATE TABLE `vip_upgrade_items` (
+  `target_tier` tinyint(3) unsigned NOT NULL COMMENT '目标会员等级 (1-3)',
+  `item_id` int(10) unsigned NOT NULL COMMENT '所需物品 ID',
+  `quantity` int(10) unsigned NOT NULL DEFAULT '1' COMMENT '所需物品数量',
+  PRIMARY KEY (`target_tier`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会员升级物品配置表';
+
+-- 会员升级日志表
+DROP TABLE IF EXISTS `vip_upgrade_log`;
+CREATE TABLE `vip_upgrade_log` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `account_id` int(10) unsigned NOT NULL COMMENT '账号 ID',
+  `old_tier` tinyint(3) unsigned NOT NULL COMMENT '原会员等级',
+  `new_tier` tinyint(3) unsigned NOT NULL COMMENT '新会员等级',
+  `item_id` int(10) unsigned NOT NULL COMMENT '消耗物品 ID',
+  `quantity` int(10) unsigned NOT NULL COMMENT '消耗物品数量',
+  `upgrade_time` bigint(20) unsigned NOT NULL COMMENT '升级时间 (Unix 时间戳)',
+  PRIMARY KEY (`id`),
+  KEY `idx_account_id` (`account_id`),
+  KEY `idx_upgrade_time` (`upgrade_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会员升级日志表';
 
 -- 技能会员权限表
 DROP TABLE IF EXISTS `vip_skill_access`;
@@ -224,10 +259,10 @@ MemberSystem.TalentPointBonus.3 = 5
 ```cpp
 enum MemberTier : uint32
 {
-    MEMBER_TIER_NONE    = 0,  // 普通会员 (VIP0)
-    MEMBER_TIER_SENIOR  = 1,  // 高级会员 (VIP1)
-    MEMBER_TIER_SUPER   = 2,  // 超级会员 (VIP2)
-    MEMBER_TIER_ULTIMATE = 3  // 至尊会员 (VIP3)
+    MEMBER_TIER_NONE      = 0,  // 普通会员 (VIP0)
+    MEMBER_TIER_SENIOR    = 1,  // 高级会员 (VIP1)
+    MEMBER_TIER_SUPER     = 2,  // 超级会员 (VIP2)
+    MEMBER_TIER_ULTIMATE  = 3   // 至尊会员 (VIP3)
 };
 ```
 
@@ -239,6 +274,14 @@ enum MemberTier : uint32
 | VIP1    | 20%       | 1 点              | VIP1 及以下   |
 | VIP2    | 50%       | 2 点              | VIP2 及以下   |
 | VIP3    | 100%      | 5 点              | 所有技能     |
+
+### 升级物品配置
+
+| 目标等级 | 物品 ID | 所需数量 | 说明 |
+|---------|--------|---------|------|
+| VIP1    |  configurable | configurable | 通过 GM 命令配置 |
+| VIP2    |  configurable | configurable | 通过 GM 命令配置 |
+| VIP3    |  configurable | configurable | 通过 GM 命令配置 |
 
 ## 正确性属性
 

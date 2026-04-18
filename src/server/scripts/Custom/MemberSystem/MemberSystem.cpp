@@ -30,6 +30,7 @@ MemberSystem::MemberSystem()
     : m_enabled(false)
     , m_dropRateBonuses{0.0f, 0.0f, 0.0f, 0.0f}
     , m_talentPointBonuses{0, 0, 0, 0}
+    , m_upgradeItemConfigs{}
 {
 }
 
@@ -105,6 +106,9 @@ bool MemberSystem::LoadFromDB()
 
     // 加载技能权限
     LoadSpellAccessFromDB();
+    
+    // 加载升级物品配置
+    LoadUpgradeItemsFromDB();
 
     return true;
 }
@@ -317,4 +321,186 @@ void MemberSystem::ReloadConfig()
     m_spellMinTierCache.clear();
     LoadSpellAccessFromDB();
     LOG_INFO("member", "Member system spell access reloaded");
+}
+
+void MemberSystem::ReloadUpgradeItems()
+{
+    LoadUpgradeItemsFromDB();
+    LOG_INFO("member", "Member system upgrade items reloaded");
+}
+
+bool MemberSystem::LoadUpgradeItemsFromDB()
+{
+    if (!m_enabled)
+        return true;
+
+    auto result = DatabaseEnv::WorldDatabase.Query("SELECT target_tier, item_id, quantity FROM vip_upgrade_items");
+    if (!result)
+    {
+        LOG_WARN("member", "No upgrade item configurations found in database");
+        return true;
+    }
+
+    uint32 count = 0;
+    do
+    {
+        Field* fields = result->Fetch();
+        uint32 targetTier = fields[0].Get<uint32>();
+        uint32 itemId = fields[1].Get<uint32>();
+        uint32 quantity = fields[2].Get<uint32>();
+
+        if (targetTier >= MAX_MEMBER_TIER || targetTier == 0)
+        {
+            LOG_WARN("member", "Invalid target tier {} for upgrade item config, skipping", targetTier);
+            continue;
+        }
+
+        m_upgradeItemConfigs[targetTier].itemId = itemId;
+        m_upgradeItemConfigs[targetTier].quantity = quantity;
+        count++;
+        LOG_DEBUG("member", "Loaded upgrade config for tier {}: item={}, quantity={}", targetTier, itemId, quantity);
+    } while (result->NextRow());
+
+    LOG_INFO("server.loading", "Loaded {} upgrade item configurations", count);
+    return true;
+}
+
+bool MemberSystem::GetUpgradeInfo(uint32 targetTier, uint32& itemId, uint32& quantity) const
+{
+    if (!m_enabled || targetTier >= MAX_MEMBER_TIER || targetTier == 0)
+        return false;
+
+    const UpgradeItemConfig& config = m_upgradeItemConfigs[targetTier];
+    if (config.itemId == 0 || config.quantity == 0)
+        return false;
+
+    itemId = config.itemId;
+    quantity = config.quantity;
+    return true;
+}
+
+bool MemberSystem::CheckUpgradeItems(Player* player, uint32 targetTier) const
+{
+    if (!m_enabled || !player)
+        return false;
+
+    uint32 itemId = 0, quantity = 0;
+    if (!GetUpgradeInfo(targetTier, itemId, quantity))
+        return false;
+
+    uint32 playerCount = player->GetItemCount(itemId, true);
+    return playerCount >= quantity;
+}
+
+bool MemberSystem::ConsumeUpgradeItems(Player* player, uint32 targetTier)
+{
+    if (!m_enabled || !player)
+        return false;
+
+    uint32 itemId = 0, quantity = 0;
+    if (!GetUpgradeInfo(targetTier, itemId, quantity))
+        return false;
+
+    uint32 playerCount = player->GetItemCount(itemId, true);
+    if (playerCount < quantity)
+        return false;
+
+    player->DestroyItemCount(itemId, quantity, true, true);
+    LOG_INFO("member", "Consumed {}x item {} for player {} upgrade to tier {}", quantity, itemId, player->GetName(), targetTier);
+    return true;
+}
+
+bool MemberSystem::UpgradeMember(uint32 accountId, uint32 targetTier)
+{
+    if (!m_enabled || targetTier >= MAX_MEMBER_TIER || targetTier == 0)
+        return false;
+
+    auto iter = m_memberCache.find(accountId);
+    if (iter == m_memberCache.end())
+    {
+        LOG_WARN("member", "Account {} not found in member cache", accountId);
+        return false;
+    }
+
+    uint32 oldTier = iter->second.tier;
+    if (oldTier >= targetTier)
+    {
+        LOG_WARN("member", "Account {} already has tier {}, cannot downgrade", accountId, oldTier);
+        return false;
+    }
+
+    uint32 itemId = 0, quantity = 0;
+    if (!GetUpgradeInfo(targetTier, itemId, quantity))
+    {
+        LOG_ERROR("member", "No upgrade item config for tier {}", targetTier);
+        return false;
+    }
+
+    uint32 currentTime = uint32(time(nullptr));
+    DatabaseEnv::WorldDatabase.Execute(
+        "UPDATE vip_member SET tier = {}, update_time = {} WHERE account_id = {}",
+        targetTier, currentTime, accountId
+    );
+
+    iter->second.tier = targetTier;
+    iter->second.updateTime = currentTime;
+
+    LOG_INFO("member", "Account {} upgraded from tier {} to tier {}", accountId, oldTier, targetTier);
+    return true;
+}
+
+void MemberSystem::SaveUpgradeLog(uint32 accountId, uint32 oldTier, uint32 newTier, uint32 itemId, uint32 quantity)
+{
+    uint32 currentTime = uint32(time(nullptr));
+    DatabaseEnv::WorldDatabase.Execute(
+        "INSERT INTO vip_upgrade_log (account_id, old_tier, new_tier, item_id, quantity, upgrade_time) VALUES ({}, {}, {}, {}, {}, {})",
+        accountId, oldTier, newTier, itemId, quantity, currentTime
+    );
+    LOG_INFO("member", "Saved upgrade log for account {}: {} -> {}, item={}, qty={}", accountId, oldTier, newTier, itemId, quantity);
+}
+
+std::vector<UpgradeLog> MemberSystem::GetUpgradeLogs(uint32 accountId, uint32 limit) const
+{
+    std::vector<UpgradeLog> logs;
+    
+    auto result = DatabaseEnv::WorldDatabase.Query(
+        "SELECT id, account_id, old_tier, new_tier, item_id, quantity, upgrade_time FROM vip_upgrade_log WHERE account_id = {} ORDER BY upgrade_time DESC LIMIT {}",
+        accountId, limit
+    );
+
+    if (!result)
+        return logs;
+
+    do
+    {
+        Field* fields = result->Fetch();
+        UpgradeLog log;
+        log.id = fields[0].Get<uint64>();
+        log.accountId = fields[1].Get<uint32>();
+        log.oldTier = fields[2].Get<uint32>();
+        log.newTier = fields[3].Get<uint32>();
+        log.itemId = fields[4].Get<uint32>();
+        log.quantity = fields[5].Get<uint32>();
+        log.upgradeTime = fields[6].Get<uint64>();
+        logs.push_back(log);
+    } while (result->NextRow());
+
+    return logs;
+}
+
+bool MemberSystem::SetUpgradeItem(uint32 targetTier, uint32 itemId, uint32 quantity)
+{
+    if (targetTier >= MAX_MEMBER_TIER || targetTier == 0)
+        return false;
+
+    DatabaseEnv::WorldDatabase.Execute(
+        "INSERT INTO vip_upgrade_items (target_tier, item_id, quantity) VALUES ({}, {}, {}) ON DUPLICATE KEY UPDATE item_id = {}, quantity = {}",
+        targetTier, itemId, quantity, itemId, quantity
+    );
+
+    m_upgradeItemConfigs[targetTier].itemId = itemId;
+    m_upgradeItemConfigs[targetTier].quantity = quantity;
+
+    LOG_INFO("member", "Set upgrade item for tier {}: item={}, quantity={}", targetTier, itemId, quantity);
+    return true;
 }

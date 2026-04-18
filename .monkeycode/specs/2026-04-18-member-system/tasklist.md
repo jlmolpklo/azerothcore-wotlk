@@ -65,6 +65,33 @@ Updated: 2026-04-18
   - [x] 修改 `cs_script_loader.cpp`
   - [x] 添加 vip 命令注册
 
+## 阶段 5: 会员升级功能
+
+- [x] 5.1 创建升级相关数据库表
+  - [x] 创建 `vip_upgrade_items` 升级物品配置表
+  - [x] 创建 `vip_upgrade_log` 升级日志表
+
+- [x] 5.2 实现会员升级核心逻辑
+  - [x] 添加 `GetUpgradeInfo` 方法
+  - [x] 添加 `CheckUpgradeItems` 方法
+  - [x] 添加 `ConsumeUpgradeItems` 方法
+  - [x] 添加 `UpgradeMember` 方法
+  - [x] 添加 `SaveUpgradeLog` 方法
+
+- [x] 5.3 实现玩家升级命令
+  - [x] 实现 `.vip upgrade` 查看升级信息
+  - [x] 实现`.vip upgrade [等级]` 执行升级
+  - [x] 添加物品检查和扣除逻辑
+
+- [x] 5.4 实现升级配置 GM 命令
+  - [x] 实现 `.vip upgrade set` 设置升级物品
+  - [x] 实现 `.vip log` 查看升级历史
+
+- [x] 5.5 集成到 MemberSystem
+  - [x] 更新 MemberSystem.h 添加升级方法
+  - [x] 更新 MemberSystem.cpp 实现升级逻辑
+  - [x] 更新 `.vip reload` 重载升级配置
+
 ## 阶段 5: 集成测试
 
 - [ ] 5.1 编译测试

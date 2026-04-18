@@ -44,6 +44,26 @@ struct MemberData
     MemberData() : accountId(0), tier(MEMBER_TIER_NONE), expireTime(0), createTime(0), updateTime(0) {}
 };
 
+struct UpgradeLog
+{
+    uint64 id;
+    uint32 accountId;
+    uint32 oldTier;
+    uint32 newTier;
+    uint32 itemId;
+    uint32 quantity;
+    uint64 upgradeTime;
+};
+
+struct UpgradeItemConfig
+{
+    uint32 itemId;
+    uint32 quantity;
+
+    UpgradeItemConfig() : itemId(0), quantity(0) {}
+    UpgradeItemConfig(uint32 id, uint32 qty) : itemId(id), quantity(qty) {}
+};
+
 class MemberSystem
 {
 public:
@@ -67,14 +87,25 @@ public:
     void SaveMemberToDB(uint32 accountId, uint32 tier, uint32 expireTime);
     void RefreshMemberCache(uint32 accountId);
 
+    // 会员升级
+    bool GetUpgradeInfo(uint32 targetTier, uint32& itemId, uint32& quantity) const;
+    bool CheckUpgradeItems(Player* player, uint32 targetTier) const;
+    bool ConsumeUpgradeItems(Player* player, uint32 targetTier);
+    bool UpgradeMember(uint32 accountId, uint32 targetTier);
+    void SaveUpgradeLog(uint32 accountId, uint32 oldTier, uint32 newTier, uint32 itemId, uint32 quantity);
+    std::vector<UpgradeLog> GetUpgradeLogs(uint32 accountId, uint32 limit = 10) const;
+
+    // GM 命令
+    bool SetUpgradeItem(uint32 targetTier, uint32 itemId, uint32 quantity);
+
     // 配置访问
     float GetTierDropRateBonus(uint32 tier) const;
     uint8 GetTierTalentBonus(uint32 tier) const;
     uint32 GetMinTierForSpell(uint32 spellId) const;
-    uint32 GetMinTierForSpell(uint32 spellId) const;
 
     // 重载配置
     void ReloadConfig();
+    void ReloadUpgradeItems();
 
 private:
     MemberSystem();
@@ -82,8 +113,9 @@ private:
     MemberSystem(MemberSystem const&) = delete;
     MemberSystem& operator=(MemberSystem const&) = delete;
 
-    // 加载技能权限配置
+    // 加载配置
     bool LoadSpellAccessFromDB();
+    bool LoadUpgradeItemsFromDB();
 
     // 配置数据
     bool m_enabled;
@@ -95,6 +127,9 @@ private:
     
     // 技能权限缓存
     std::unordered_map<uint32, uint32> m_spellMinTierCache;
+    
+    // 升级物品配置缓存
+    std::array<UpgradeItemConfig, MAX_MEMBER_TIER> m_upgradeItemConfigs;
 };
 
 #define sMemberSystem MemberSystem::instance()
