@@ -954,6 +954,9 @@ bool Unit::IsImmunedToSpell(SpellInfo const* spellInfo, uint32 effectMask, Unit 
             for (auto const& [immunitySchoolMask, immunityAuraId] : schoolList)
             {
                 SpellInfo const* immuneSpellInfo = sSpellMgr->GetSpellInfo(immunityAuraId);
+                if (immunityAuraId == spellInfo->Id)
+                    continue;
+
                 if ((immunitySchoolMask & schoolMask) != schoolMask)
                     continue;
 
@@ -10087,6 +10090,9 @@ bool Unit::IsImmunedToSpell(SpellInfo const* spellInfo, Spell const* spell)
             SpellImmuneContainer const& schoolList = m_spellImmune[IMMUNITY_SCHOOL];
             for (auto itr = schoolList.begin(); itr != schoolList.end(); ++itr)
             {
+                if (itr->second == spellInfo->Id)
+                    continue;
+
                 SpellInfo const* immuneSpellInfo = sSpellMgr->GetSpellInfo(itr->second);
                 if (!(itr->first & spellSchoolMask))
                     continue;
@@ -10618,6 +10624,8 @@ void Unit::Dismount()
             if (charm->IsCreature() && !charm->HasUnitState(UNIT_STATE_STUNNED))
                 charm->RemoveUnitFlag(UNIT_FLAG_STUNNED);
     }
+
+    UpdateSpeed(MOVE_RUN, true);
 }
 
 void Unit::SetImmuneToPC(bool apply, bool keepCombat)
