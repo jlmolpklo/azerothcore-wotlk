@@ -74,8 +74,7 @@ enum Yells
 
     // Acidmaw & Dreadscale
     EMOTE_ENRAGE            = 0,
-    EMOTE_SUBMERGE          = 1,
-    EMOTE_EMERGE            = 2,
+    WHISPER_PARALYTIC_TOXIN = 1, // Acidmaw only
 
     // Icehowl
     EMOTE_TRAMPLE_STARE     = 0,
@@ -483,6 +482,7 @@ enum JormungarSpells
     SPELL_ACID_SPEW                     = 66818,
     SPELL_PARALYTIC_SPRAY               = 66901,
     SPELL_PARALYTIC_BITE                = 66824,
+    SPELL_PARALYSIS                     = 66830,
 
     SPELL_FIRE_SPIT                     = 66796,
     SPELL_MOLTEN_SPEW                   = 66821,
@@ -630,7 +630,6 @@ struct boss_jormungarAI : public ScriptedAI
                     bIsStationary = (me->GetDisplayId() == _MODEL_STATIONARY);
                     me->SetUnitFlag(UNIT_FLAG_NON_ATTACKABLE | UNIT_FLAG_NOT_SELECTABLE);
                     me->CastSpell(me, SPELL_SUBMERGE_0, false);
-                    Talk(EMOTE_SUBMERGE);
 
                     // second one submerge 1.5sec after the first one, used also for synchronizing
                     if (pInstance)
@@ -677,13 +676,12 @@ struct boss_jormungarAI : public ScriptedAI
                     }
                     me->RemoveAurasDueToSpell(SPELL_SUBMERGE_0);
                     me->CastSpell(me, SPELL_EMERGE_0, false);
-                    Talk(EMOTE_EMERGE);
                     me->RemoveUnitFlag(UNIT_FLAG_NON_ATTACKABLE | UNIT_FLAG_NOT_SELECTABLE);
                     ScheduleEvents();
                 }
                 break;
             case EVENT_SPELL_SPRAY:
-                if (Unit* target = SelectTarget(SelectTargetMethod::Random, 0, 100.0f, true))
+                if (Unit* target = SelectTarget(SelectTargetMethod::Random, 0, 100.0f, true, false))
                     me->CastSpell(target, _SPELL_SPRAY, false);
                 events.Repeat(20s);
                 break;
@@ -784,6 +782,60 @@ public:
     CreatureAI* GetAI(Creature* pCreature) const override
     {
         return GetTrialOfTheCrusaderAI<boss_dreadscaleAI>(pCreature);
+    }
+};
+
+// 66823, 67618, 67619, 67620 - Paralytic Toxin
+class spell_jormungars_paralytic_toxin_aura : public AuraScript
+{
+    PrepareAuraScript(spell_jormungars_paralytic_toxin_aura);
+
+    bool Validate(SpellInfo const* /*spellInfo*/) override
+    {
+        return ValidateSpellInfo({ SPELL_PARALYSIS });
+    }
+
+    void OnApply(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
+    {
+        Unit* caster = GetCaster();
+        if (caster && caster->GetEntry() == NPC_ACIDMAW)
+            if (Creature* acidmaw = caster->ToCreature())
+                acidmaw->AI()->Talk(WHISPER_PARALYTIC_TOXIN, GetTarget());
+    }
+
+    void OnRemove(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
+    {
+        GetTarget()->RemoveAurasDueToSpell(SPELL_PARALYSIS);
+    }
+
+    // Keeps the accumulated slow across amount recalculations
+    void CalculateAmount(AuraEffect const* aurEff, int32& amount, bool& canBeRecalculated)
+    {
+        if (!canBeRecalculated)
+            amount = aurEff->GetAmount();
+
+        canBeRecalculated = false;
+    }
+
+    void HandlePeriodic(AuraEffect const* /*aurEff*/)
+    {
+        AuraEffect* slow = GetEffect(EFFECT_0);
+        if (!slow)
+            return;
+
+        int32 newAmount = std::max(slow->GetAmount() - 10, -100);
+        slow->ChangeAmount(newAmount);
+
+        if (newAmount == -100 && !GetTarget()->HasAura(SPELL_PARALYSIS))
+            GetTarget()->CastSpell(GetTarget(), SPELL_PARALYSIS, true, nullptr, slow, GetCasterGUID());
+    }
+
+    void Register() override
+    {
+        AfterEffectApply += AuraEffectApplyFn(spell_jormungars_paralytic_toxin_aura::OnApply, EFFECT_0, SPELL_AURA_MOD_DECREASE_SPEED, AURA_EFFECT_HANDLE_REAL);
+        AfterEffectRemove += AuraEffectRemoveFn(spell_jormungars_paralytic_toxin_aura::OnRemove, EFFECT_0, SPELL_AURA_MOD_DECREASE_SPEED, AURA_EFFECT_HANDLE_REAL);
+        DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_jormungars_paralytic_toxin_aura::CalculateAmount, EFFECT_0, SPELL_AURA_MOD_DECREASE_SPEED);
+        OnEffectPeriodic += AuraEffectPeriodicFn(spell_jormungars_paralytic_toxin_aura::HandlePeriodic, EFFECT_2, SPELL_AURA_PERIODIC_DUMMY);
     }
 };
 
@@ -1135,6 +1187,7 @@ void AddSC_boss_northrend_beasts()
 
     new boss_acidmaw();
     new boss_dreadscale();
+    RegisterSpellScript(spell_jormungars_paralytic_toxin_aura);
 
     new boss_icehowl();
     RegisterSpellScript(spell_icehowl_jump_back);
